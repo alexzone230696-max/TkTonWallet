@@ -1,34 +1,89 @@
-name: Android Build without Wrapper
+name: Android CI - Build APK
 
+# Триггеры: пуш, PR и ручной запуск
 on:
   push:
-    branches:
-      - main
+  pull_request:
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # модуль приложения (если у тебя другой — поменяй)
+      APP_MODULE: app
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Set up JDK
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
-      - name: Set up Gradle
+      - name: Set up Android SDK (platform tools + build-tools + platform)
+        # Этот action установит sdkmanager и нужные пакеты
+        uses: android-actions/setup-android@v3
+        with:
+          sdk-components: |
+            platform-tools
+            build-tools;33.0.2
+            platforms;android-33
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-cache-${{ runner.os }}-v1-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: gradle-cache-${{ runner.os }}-v1-
+
+      - name: Ensure gradlew is executable
+        run: chmod +x ./gradlew || true
+
+      - name: Install Gradle (fallback) — prepare 'gradle' CLI in case wrapper jar is missing
         uses: gradle/actions/setup-gradle@v3
         with:
-          gradle-version: '7.5.1'  # версия, которую хочешь использовать
+          gradle-version: '7.5.1'
 
-      - name: Build app
-        run: gradle assembleDebug
+      - name: Show repo files (debug)
+        run: |
+          echo "Root files:"
+          ls -la
+          echo "Gradle wrapper dir:"
+          ls -la gradle || true
+          echo "gradle/wrapper:"
+          ls -la gradle/wrapper || true
 
-      - name: Upload APK
+      - name: Build (use wrapper if present, otherwise create wrapper then build)
+        # Скрипт: если есть gradle/wrapper/gradle-wrapper.jar -> ./gradlew assembleDebug
+        # иначе: используем 'gradle' (установленный action'ом выше) чтобы создать wrapper и потом ./gradlew assembleDebug
+        run: |
+          set -e
+          if [ -f "gradle/wrapper/gradle-wrapper.jar" ]; then
+            echo "Gradle wrapper JAR found -> using ./gradlew"
+            ./gradlew clean assembleDebug --no-daemon
+          else
+            echo "Gradle wrapper JAR NOT found -> creating wrapper with installed gradle"
+            # генерируем wrapper (версию gradle взял 7.5.1 — совместима с Android/AGP в большинстве старых проектов)
+            gradle wrapper --gradle-version 7.5.1
+            chmod +x ./gradlew
+            ./gradlew clean assembleDebug --no-daemon
+          fi
+
+      - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug
-          path: app/build/outputs/apk/debug/*.apk
+          name: app-debug-apks
+          path: |
+            app/build/outputs/**/*.apk
+            app/build/outputs/**/*.aab
+
+      - name: Print success message
+        if: success()
+        run: echo "Build finished — APK/AAB uploaded as artifact 'app-debug-apks'."
