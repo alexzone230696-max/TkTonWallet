@@ -1,0 +1,36 @@
+name: Android CI for TkTonWallet
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      JAVA_HOME: /usr/lib/jvm/java-11-openjdk
+      ANDROID_SDK_ROOT: ${{ runner.tool_cache }}/android-sdk
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 11
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses
+        shell: bash
+
+      - name: Install Android SDK (platforms & build-tools)
+        run: |
+          sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.2"
+        shell: bash
+
+      - name: Build project
+        run: ./gradlew assembleDebug
+        working-directory: ./
